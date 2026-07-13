@@ -39,6 +39,11 @@ interface Actions {
 const INITIAL: DesignSession & { userId: string; history: HistoryEntry[] } = {
   step:              'upload',
   roomType:          'Bedroom',
+  style:             undefined,          // cleared on reset
+  roomImage:         undefined,          // cleared on reset
+  roomImageUrl:      undefined,          // cleared on reset
+  sessionId:         undefined,          // cleared on reset
+  pipeline:          undefined,          // cleared on reset
   furniture:         [],
   colorPalette:      'Warm Woods & Neutrals',
   aiMode:            'strict',

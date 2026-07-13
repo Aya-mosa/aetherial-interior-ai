@@ -21,6 +21,9 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
+    # Set this in production (e.g. Render env vars) to your deployed frontend URL,
+    # e.g. https://your-app.vercel.app — it gets added to ALLOWED_ORIGINS automatically.
+    FRONTEND_URL: str = ""
 
     # Directories
     PIPELINE_DATA_DIR: str = "pipeline_data"
