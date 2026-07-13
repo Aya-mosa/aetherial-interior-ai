@@ -2,6 +2,12 @@
 Agent 2: Spatial Planner
 Primary:  OpenRouter DeepSeek-R1 (best for JSON/spatial reasoning, free)
 Fallback: Gemini (with retry) → other OR models
+
+FIX (v5): model.generate_content() is a BLOCKING sync call — it has no async
+client. Calling it directly inside `async def` freezes the whole event loop
+for the entire Gemini network round-trip, which was causing 502 Bad Gateway
+on Railway (the process couldn't flush the HTTP response / answer health
+checks while stuck here). Fixed by running it via asyncio.to_thread().
 """
 import json
 import logging
@@ -106,8 +112,14 @@ async def _call_openrouter(a1: Agent1Output) -> Optional[str]:
     )
 
 
+def _sync_generate(model, prompt: str) -> str:
+    """Blocking call — MUST only ever be invoked via asyncio.to_thread()."""
+    response = model.generate_content(prompt)
+    return response.text.strip()
+
+
 async def _call_gemini(a1: Agent1Output) -> Optional[str]:
-    """Fallback: Gemini with retry on 429."""
+    """Fallback: Gemini with retry on 429. Runs the blocking SDK call in a thread."""
     genai.configure(api_key=settings.GEMINI_API_KEY)
     model = genai.GenerativeModel(
         model_name=settings.GEMINI_MODEL.strip(),
@@ -118,8 +130,8 @@ async def _call_gemini(a1: Agent1Output) -> Optional[str]:
     prompt = _build_prompt(a1)
     for attempt in range(3):
         try:
-            response = model.generate_content(prompt)
-            return response.text.strip()
+            # ⬇️ THE FIX: offload the blocking network call to a thread pool
+            return await asyncio.to_thread(_sync_generate, model, prompt)
         except Exception as e:
             if "429" in str(e):
                 wait = 20 * (attempt + 1)

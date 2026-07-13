@@ -2,6 +2,12 @@
 Agent 3: Vision Analyser
 Primary:  Gemini (only model that sees images via free key)
 Fallback: OpenRouter llama-4-scout (multimodal, free) → text-only defaults
+
+FIX (v5): model.generate_content() is a BLOCKING sync call — no async client
+exists in google.generativeai. Calling it directly inside `async def` freezes
+the whole event loop for the entire Gemini vision round-trip (often the
+SLOWEST call in the pipeline since it uploads an image), which was the main
+cause of 502 Bad Gateway on Railway. Fixed via asyncio.to_thread().
 """
 import asyncio, base64, io, json, logging
 from pathlib import Path
@@ -122,20 +128,26 @@ def _parse_vision_json(raw: str, session_id: str) -> Optional[Agent3Output]:
         return None
 
 
+def _sync_generate_vision(model, blob: dict) -> str:
+    """Blocking call — MUST only ever be invoked via asyncio.to_thread()."""
+    response = model.generate_content([
+        {"mime_type": blob["mime"], "data": blob["b64"]},
+        VISION_PROMPT,
+    ])
+    return response.text.strip()
+
+
 async def _call_gemini(blob: dict) -> Optional[str]:
     """Primary: Gemini vision (supports real image analysis)."""
+    genai.configure(api_key=settings.GEMINI_API_KEY)
+    model = genai.GenerativeModel(
+        model_name=settings.GEMINI_MODEL.strip(),
+        generation_config=genai.types.GenerationConfig(temperature=0.1),
+    )
     for attempt in range(3):
         try:
-            genai.configure(api_key=settings.GEMINI_API_KEY)
-            model = genai.GenerativeModel(
-                model_name=settings.GEMINI_MODEL.strip(),
-                generation_config=genai.types.GenerationConfig(temperature=0.1),
-            )
-            response = model.generate_content([
-                {"mime_type": blob["mime"], "data": blob["b64"]},
-                VISION_PROMPT,
-            ])
-            return response.text.strip()
+            # ⬇️ THE FIX: offload the blocking network call to a thread pool
+            return await asyncio.to_thread(_sync_generate_vision, model, blob)
         except Exception as e:
             if "429" in str(e):
                 wait = 20 * (attempt + 1)

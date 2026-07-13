@@ -14,10 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Folders the app writes to at runtime (safe to recreate on every deploy)
-RUN mkdir -p pipeline_data/uploads pipeline_data/outputs
+RUN mkdir -p pipeline_data/uploads pipeline_data/outputs && chmod -R 777 pipeline_data
 
-# Render (and most PaaS) inject $PORT at runtime — default to 8000 for local/docker-compose use
-ENV PORT=8000
-EXPOSE 8000
+ENV PORT=7860
+EXPOSE 7860
 
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]

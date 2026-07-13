@@ -2,6 +2,13 @@
 Agent 1: Preprocessing Engine
 Primary:  Gemini (with retry on 429)
 Fallback: OpenRouter gemma/llama (free tier)
+
+FIX (v5): model.generate_content() is a BLOCKING sync call (google.generativeai
+has no async client). Calling it directly inside `async def` freezes the whole
+event loop for the entire duration of the Gemini network request — which is
+exactly why /api/design/start was timing out with 502 on Railway (the process
+couldn't flush the HTTP response, or serve health checks, while stuck here).
+Fix: run it in a worker thread via asyncio.to_thread() so the loop stays free.
 """
 import json
 import logging
@@ -37,14 +44,21 @@ No markdown, no preamble.
 Example: {{"additional_notes": "Japandi style requires low-profile furniture and natural materials"}}"""
 
 
+def _sync_generate(model, prompt: str) -> str:
+    """Blocking call — MUST only ever be invoked via asyncio.to_thread()."""
+    response = model.generate_content(prompt)
+    return response.text.strip()
+
+
 async def _call_gemini(request: DesignRequest) -> Optional[str]:
-    """Try Gemini with up to 2 retries on 429."""
+    """Try Gemini with up to 2 retries on 429. Runs the blocking SDK call in a thread."""
     model = _get_model()
     prompt = _build_prompt(request)
     for attempt in range(3):
         try:
-            response = model.generate_content(prompt)
-            return response.text.strip()
+            # ⬇️ THE FIX: offload the blocking network call to a thread pool
+            text = await asyncio.to_thread(_sync_generate, model, prompt)
+            return text
         except Exception as e:
             err = str(e)
             if "429" in err:

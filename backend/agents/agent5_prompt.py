@@ -2,6 +2,11 @@
 Agent 5: Prompt Engineer
 Primary:  OpenRouter Llama-3.3-70B (best for creative language, free)
 Fallback: Gemini → DeepSeek → hard-coded prompt builder
+
+FIX (v5): model.generate_content() is a BLOCKING sync call — no async client
+exists in google.generativeai. Calling it directly inside `async def` freezes
+the whole event loop for the entire Gemini round-trip, which was causing 502
+Bad Gateway on Railway. Fixed via asyncio.to_thread().
 """
 import asyncio, json, logging
 from typing import Optional, Tuple
@@ -132,16 +137,23 @@ async def _call_openrouter(a1, a2, a3) -> Optional[str]:
     )
 
 
+def _sync_generate(model, prompt: str) -> str:
+    """Blocking call — MUST only ever be invoked via asyncio.to_thread()."""
+    response = model.generate_content(prompt)
+    return response.text.strip()
+
+
 async def _call_gemini(a1, a2, a3) -> Optional[str]:
+    genai.configure(api_key=settings.GEMINI_API_KEY)
+    model = genai.GenerativeModel(
+        model_name=settings.GEMINI_MODEL.strip(),
+        generation_config=genai.types.GenerationConfig(temperature=0.4, top_p=0.95),
+    )
+    prompt = _build_prompt(a1, a2, a3)
     for attempt in range(3):
         try:
-            genai.configure(api_key=settings.GEMINI_API_KEY)
-            model = genai.GenerativeModel(
-                model_name=settings.GEMINI_MODEL.strip(),
-                generation_config=genai.types.GenerationConfig(temperature=0.4, top_p=0.95),
-            )
-            response = model.generate_content(_build_prompt(a1, a2, a3))
-            return response.text.strip()
+            # ⬇️ THE FIX: offload the blocking network call to a thread pool
+            return await asyncio.to_thread(_sync_generate, model, prompt)
         except Exception as e:
             if "429" in str(e):
                 wait = 20 * (attempt + 1)
@@ -181,3 +193,5 @@ async def run(
     logger.warning("[Agent5] All AI failed — using rule-based prompt")
     result = _fallback_prompt(session_id, a1, a2, a3)
     return result, ""
+
+    
