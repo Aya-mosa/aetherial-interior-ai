@@ -2,6 +2,10 @@
 
 A premium AI-powered interior design platform. Multi-agent pipeline with SDXL + ControlNet.
 
+### 🎥 Demo Video
+
+[Watch the demo on Google Drive](https://drive.google.com/file/d/1BjFT46qxTyPNpL2DtJluFjU9cwGazcKp/view?usp=drive_link)
+
 ## Project Structure
 
 ```
